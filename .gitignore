@@ -1,0 +1,5 @@
+train/
+train_enhanced/
+train_resized/
+test/
+pycache
