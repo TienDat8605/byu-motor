@@ -25,7 +25,7 @@ class FlagellarMotorDataset(Dataset):
         tomo_id = self.tomo_ids[idx]
         tomo_path = os.path.join(self.data_dir, tomo_id)
 
-        # Load all slices and stack them into a 3D array
+        # Load all slices
         slice_files = sorted(os.listdir(tomo_path))
         slices = [cv2.imread(os.path.join(tomo_path, f), cv2.IMREAD_GRAYSCALE) for f in slice_files]
         tomo_tensor = np.stack(slices, axis=0)  # Shape: (Z, H, W)
@@ -40,26 +40,23 @@ class FlagellarMotorDataset(Dataset):
         z_labels = np.zeros(tomo_tensor.shape[0], dtype=np.float32)
         for _, row in motor_locs.iterrows():
             z_index = int(row["Motor axis 0"])
-            z_labels[z_index] = 1  # Mark the motor location in the Z-dimension
+            z_labels[z_index] = 1  # Mark motor location
+
+        # --- Apply Sliding Window (Crop to Fixed Depth) ---
+        z_size = tomo_tensor.shape[0]  # Actual depth
+        if z_size > self.cube_size:
+            # Randomly select a starting point for the cube
+            start_idx = np.random.randint(0, z_size - self.cube_size + 1)
+            tomo_tensor = tomo_tensor[start_idx:start_idx + self.cube_size, :, :]
+            z_labels = z_labels[start_idx:start_idx + self.cube_size]
+        else:
+            # If smaller, pad with zeros
+            pad_size = self.cube_size - z_size
+            tomo_tensor = np.pad(tomo_tensor, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
+            z_labels = np.pad(z_labels, (0, pad_size), mode='constant')
 
         return torch.tensor(tomo_tensor).unsqueeze(0), torch.tensor(z_labels)
 
-def custom_collate(batch):
-    """Pad tomograms along depth (Z-axis) to match the largest depth in the batch."""
-    tomos, labels = zip(*batch)  # Unpack batch
-
-    # Find max depth (Z-axis size) in this batch
-    max_depth = max(t.shape[1] for t in tomos)
-
-    # Pad each tomogram along the Z-axis
-    padded_tomos = [torch.nn.functional.pad(t, (0, 0, 0, 0, 0, max_depth - t.shape[1])) for t in tomos]
-
-    # Stack into a single tensor
-    tomo_tensor = torch.stack(padded_tomos)
-    labels_tensor = torch.stack(labels)  # 🛠 Fix here: Stack labels properly
-
-    return tomo_tensor, labels_tensor
-
-train_labels = pd.read_csv("train_labels_resized.csv")
-train_dataset = FlagellarMotorDataset(train_labels, "train_enhanced/", cube_size=16)
-train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, collate_fn=custom_collate)
+# train_labels = pd.read_csv("train_labels_resized.csv")
+# train_dataset = FlagellarMotorDataset(train_labels, "train_enhanced/", cube_size=16)
+# train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True)
